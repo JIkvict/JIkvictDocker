@@ -18,9 +18,9 @@ fun main(args: Array<String>) {
         displayUsage()
         exitProcess(1)
     }
-    
+
     Logger.info("Processing zip file: ${arguments.zipFilePath} with timeout: ${arguments.timeoutSeconds} seconds")
-    
+
     val solutionRunner = SolutionRunner()
     solutionRunner.executeCode(arguments.zipFile, arguments.timeoutSeconds)
 }
@@ -36,7 +36,7 @@ private fun displayUsage() {
 
 /**
  * Parses command line arguments and validates them.
- * 
+ *
  * @param args Command line arguments
  * @return Arguments object or null if arguments are invalid
  */
@@ -47,13 +47,13 @@ private fun parseArguments(args: Array<String>): Arguments? {
 
     val zipFilePath = args[0]
     val timeoutSeconds = if (args.size > 1) args[1].toLongOrNull() ?: 300L else 300L
-    
+
     val zipFile = File(zipFilePath)
     if (!zipFile.exists()) {
         Logger.error("File not found: $zipFilePath")
         return null
     }
-    
+
     return Arguments(zipFilePath, zipFile, timeoutSeconds)
 }
 
@@ -83,7 +83,7 @@ object Logger {
 class SolutionRunner {
     /**
      * Executes code from a zip file with the specified timeout.
-     * 
+     *
      * @param file Zip file containing the code to execute
      * @param timeoutSeconds Timeout in seconds for execution
      */
@@ -96,7 +96,7 @@ class SolutionRunner {
             val zipExtractor = ZipExtractor()
             Logger.info("Extracting zip file to: $tempDir")
             zipExtractor.extract(file, tempDir)
-            
+
             // Display the directory structure
             DirectoryUtils.logTreeStructure(tempDir)
 
@@ -104,9 +104,31 @@ class SolutionRunner {
             val projectDir = findProjectDirectory(tempDir) ?: throw ProjectNotFoundException()
             Logger.info("Found project directory: $projectDir")
 
-            // Make gradlew executable
+            // Make gradlew executable with enhanced permissions
             val gradlewFile = projectDir.resolve("gradlew")
-            gradlewFile.toFile().setExecutable(true)
+            val gradlewFileObj = gradlewFile.toFile()
+
+            // Try multiple approaches to ensure executable permissions
+            val permissionSet = gradlewFileObj.setExecutable(true, false) // executable for all users
+            Logger.info("Setting executable permission for gradlew: ${if (permissionSet) "success" else "failed"}")
+
+            // Also try setting read permissions explicitly
+            gradlewFileObj.setReadable(true, false)
+
+            // As a fallback, try using chmod command
+            try {
+                val chmodProcess = ProcessBuilder("chmod", "+x", gradlewFile.toString())
+                    .redirectErrorStream(true)
+                    .start()
+                val chmodExitCode = chmodProcess.waitFor()
+                Logger.info("Chmod command result: ${if (chmodExitCode == 0) "success" else "failed with code $chmodExitCode"}")
+
+                // Verify permissions after chmod
+                Logger.info("Gradlew file exists: ${Files.exists(gradlewFile)}")
+                Logger.info("Gradlew file permissions: ${Files.getPosixFilePermissions(gradlewFile)}")
+            } catch (e: Exception) {
+                Logger.warning("Failed to execute chmod command: ${e.message}")
+            }
 
             // Run the Gradle task
             val gradleRunner = GradleRunner()
@@ -123,7 +145,7 @@ class SolutionRunner {
 
     /**
      * Finds the project directory containing a gradlew file.
-     * 
+     *
      * @param baseDir Base directory to search in
      * @return Path to the project directory or null if not found
      */
@@ -153,7 +175,7 @@ class ProjectNotFoundException : RuntimeException("Project directory with gradle
 object DirectoryUtils {
     /**
      * Cleans up a directory by deleting all files and subdirectories.
-     * 
+     *
      * @param directory Directory to clean up
      */
     fun cleanupDirectory(directory: Path) {
@@ -168,7 +190,7 @@ object DirectoryUtils {
 
     /**
      * Logs the directory structure for debugging purposes.
-     * 
+     *
      * @param directory Directory to log
      * @param level Current indentation level
      */
@@ -194,7 +216,7 @@ object DirectoryUtils {
 class GradleRunner {
     /**
      * Runs a Gradle task in the specified project directory with a timeout.
-     * 
+     *
      * @param projectDir Project directory containing the Gradle wrapper
      * @param timeoutSeconds Timeout in seconds
      */
@@ -202,30 +224,74 @@ class GradleRunner {
         val relativeProjectPath = projectDir.toString()
         Logger.info("Relative project path: $relativeProjectPath")
 
-        val processBuilder = ProcessBuilder()
-            .directory(projectDir.toFile())
-            .command("./gradlew", "test", "--no-daemon", "--console=plain")
-            .redirectErrorStream(true)
-        
-        Logger.info("Executing Gradle task...")
-        val process = processBuilder.start()
-        
-        // Capture output
-        val output = process.inputStream.bufferedReader().use { it.readText() }
-        
-        // Wait for the process to complete with timeout
-        val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
-        
-        if (!completed) {
-            handleTimeout(process, timeoutSeconds, output)
-        } else {
-            handleCompletion(process.exitValue(), output)
+        // Verify gradlew file exists and has proper permissions
+        val gradlewFile = projectDir.resolve("gradlew")
+        Logger.info("Gradlew file exists: ${Files.exists(gradlewFile)}")
+        try {
+            Logger.info("Gradlew file permissions: ${Files.getPosixFilePermissions(gradlewFile)}")
+        } catch (e: Exception) {
+            Logger.warning("Unable to get POSIX permissions: ${e.message}")
+        }
+
+        // First try: Direct execution of system Gradle
+        try {
+            Logger.info("Attempting to execute system Gradle directly...")
+            val processBuilder = ProcessBuilder()
+                .directory(projectDir.toFile())
+                .command("gradle", "test", "--no-daemon", "--console=plain", "-g", System.getenv("GRADLE_USER_HOME") ?: "/gradle-cache")
+                .redirectErrorStream(true)
+
+            Logger.info("Executing command: gradle test --no-daemon --console=plain -g ${System.getenv("GRADLE_USER_HOME") ?: "/gradle-cache"}")
+            val process = processBuilder.start()
+
+            // Capture output
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+
+            // Wait for the process to complete with timeout
+            val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+
+            if (!completed) {
+                handleTimeout(process, timeoutSeconds, output)
+                return
+            } else {
+                handleCompletion(process.exitValue(), output)
+                return
+            }
+        } catch (e: Exception) {
+            Logger.warning("Direct execution of system Gradle failed: ${e.message}")
+            Logger.info("Trying alternative execution method with explicit path...")
+        }
+
+        // Second try: Using system Gradle with explicit path
+        try {
+            val processBuilder = ProcessBuilder()
+                .directory(projectDir.toFile())
+                .command("/opt/gradle/bin/gradle", "test", "--no-daemon", "--console=plain", "-g", System.getenv("GRADLE_USER_HOME") ?: "/gradle-cache")
+                .redirectErrorStream(true)
+
+            Logger.info("Executing command: /opt/gradle/bin/gradle test --no-daemon --console=plain -g ${System.getenv("GRADLE_USER_HOME") ?: "/gradle-cache"}")
+            val process = processBuilder.start()
+
+            // Capture output
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+
+            // Wait for the process to complete with timeout
+            val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+
+            if (!completed) {
+                handleTimeout(process, timeoutSeconds, output)
+            } else {
+                handleCompletion(process.exitValue(), output)
+            }
+        } catch (e: Exception) {
+            Logger.error("Both system Gradle execution methods failed. Last error: ${e.message}")
+            e.printStackTrace()
         }
     }
 
     /**
      * Handles the case when the process times out.
-     * 
+     *
      * @param process The process that timed out
      * @param timeoutSeconds The timeout that was exceeded
      * @param output The partial output from the process
@@ -233,19 +299,19 @@ class GradleRunner {
     private fun handleTimeout(process: Process, timeoutSeconds: Long, output: String) {
         Logger.error("Execution timed out after $timeoutSeconds seconds")
         process.destroy()
-        
+
         // Give the process a chance to terminate gracefully
         if (!process.waitFor(5, TimeUnit.SECONDS)) {
             process.destroyForcibly()
         }
-        
+
         Logger.info("Process was forcibly terminated")
         Logger.info("Partial output:\n$output")
     }
 
     /**
      * Handles the completion of the process.
-     * 
+     *
      * @param exitCode The exit code of the process
      * @param output The output from the process
      */
@@ -265,7 +331,7 @@ class GradleRunner {
 class ZipExtractor {
     /**
      * Extracts a ZIP file to the target directory.
-     * 
+     *
      * @param file ZIP file to extract
      * @param targetDir Target directory to extract to
      */
@@ -283,7 +349,7 @@ class ZipExtractor {
 
     /**
      * Handles ZIP exceptions by attempting alternative extraction methods.
-     * 
+     *
      * @param e The ZIP exception
      * @param file The ZIP file
      * @param targetDir The target directory
@@ -302,7 +368,7 @@ class ZipExtractor {
 
     /**
      * Extracts a ZIP file using the standard Java API.
-     * 
+     *
      * @param file ZIP file to extract
      * @param targetDir Target directory to extract to
      */
@@ -320,7 +386,7 @@ class ZipExtractor {
 
     /**
      * Processes a single ZIP entry.
-     * 
+     *
      * @param zipEntry The ZIP entry to process
      * @param zipStream The ZIP input stream
      * @param targetDir The target directory
@@ -344,7 +410,7 @@ class ZipExtractor {
 
     /**
      * Extracts a file from a ZIP entry.
-     * 
+     *
      * @param zipEntry The ZIP entry containing the file
      * @param zipStream The ZIP input stream
      * @param entryPath The path to extract the file to
@@ -358,15 +424,28 @@ class ZipExtractor {
         Logger.debug("Extracted file: ${zipEntry.name}")
 
         // Set executable permissions for gradlew
-        if (zipEntry.name.endsWith("gradlew")) {
-            entryPath.toFile().setExecutable(true)
-            Logger.debug("Set executable permissions for: ${zipEntry.name}")
+        if (zipEntry.name.endsWith("gradlew") || zipEntry.name.endsWith("gradlew.bat") || zipEntry.name.endsWith("gradlew.sh")) {
+            val gradlewExecutable = entryPath.toFile()
+            val permissionSet = gradlewExecutable.setExecutable(true, false) // executable for all users
+            gradlewExecutable.setReadable(true, false)
+            Logger.debug("Set executable permissions for: ${zipEntry.name} - ${if (permissionSet) "success" else "failed"}")
+
+            // As a fallback, try using chmod command
+            try {
+                val chmodProcess = ProcessBuilder("chmod", "+x", entryPath.toString())
+                    .redirectErrorStream(true)
+                    .start()
+                val chmodExitCode = chmodProcess.waitFor()
+                Logger.debug("Chmod command for ${zipEntry.name}: ${if (chmodExitCode == 0) "success" else "failed with code $chmodExitCode"}")
+            } catch (e: Exception) {
+                Logger.warning("Failed to execute chmod command for ${zipEntry.name}: ${e.message}")
+            }
         }
     }
 
     /**
      * Extracts a ZIP file using the system unzip command for better compatibility.
-     * 
+     *
      * @param file ZIP file to extract
      * @param targetDir Target directory to extract to
      */
@@ -376,7 +455,7 @@ class ZipExtractor {
             if (extractWithUnzipCommand(file, targetDir)) {
                 return
             }
-            
+
             // Fall back to manual extraction if unzip fails
             Logger.info("Switching to manual extraction...")
             extractManually(file, targetDir)
@@ -388,18 +467,18 @@ class ZipExtractor {
 
     /**
      * Extracts a ZIP file using the system unzip command.
-     * 
+     *
      * @param file ZIP file to extract
      * @param targetDir Target directory to extract to
      * @return true if extraction was successful, false otherwise
      */
     private fun extractWithUnzipCommand(file: File, targetDir: Path): Boolean {
         Logger.info("Attempting extraction with unzip command")
-        
+
         try {
             val processBuilder = ProcessBuilder("unzip", "-q", "-o", file.absolutePath, "-d", targetDir.toString())
                 .redirectErrorStream(true)
-            
+
             val process = processBuilder.start()
             val output = process.inputStream.bufferedReader().use { it.readText() }
             val exitCode = process.waitFor()
@@ -424,7 +503,7 @@ class ZipExtractor {
 
     /**
      * Counts the number of files extracted to a directory.
-     * 
+     *
      * @param targetDir The directory containing the extracted files
      * @return The number of files
      */
@@ -437,24 +516,40 @@ class ZipExtractor {
 
     /**
      * Sets the executable permission on gradlew files.
-     * 
+     *
      * @param targetDir The directory to search for gradlew files
      */
     private fun setGradlewExecutable(targetDir: Path) {
         Files.walk(targetDir)
             .filter { !Files.isDirectory(it) && it.fileName.toString() == "gradlew" }
-            .forEach { it.toFile().setExecutable(true) }
+            .forEach { gradlewPath ->
+                val gradlewFile = gradlewPath.toFile()
+                val permissionSet = gradlewFile.setExecutable(true, false) // executable for all users
+                gradlewFile.setReadable(true, false)
+                Logger.debug("Set executable permissions for: ${gradlewPath.fileName} - ${if (permissionSet) "success" else "failed"}")
+
+                // As a fallback, try using chmod command
+                try {
+                    val chmodProcess = ProcessBuilder("chmod", "+x", gradlewPath.toString())
+                        .redirectErrorStream(true)
+                        .start()
+                    val chmodExitCode = chmodProcess.waitFor()
+                    Logger.debug("Chmod command for ${gradlewPath.fileName}: ${if (chmodExitCode == 0) "success" else "failed with code $chmodExitCode"}")
+                } catch (e: Exception) {
+                    Logger.warning("Failed to execute chmod command for ${gradlewPath.fileName}: ${e.message}")
+                }
+            }
     }
 
     /**
      * Extracts a ZIP file manually, handling problematic entries.
-     * 
+     *
      * @param file ZIP file to extract
      * @param targetDir Target directory to extract to
      */
     private fun extractManually(file: File, targetDir: Path) {
         Logger.info("Performing manual extraction of ZIP archive")
-        
+
         ZipInputStream(file.inputStream()).use { zipStream ->
             var entry: ZipEntry?
             var extractedCount = 0
@@ -479,10 +574,10 @@ class ZipExtractor {
                 }
 
                 processedEntries.add(entryName)
-                
+
                 // Process the entry
                 extractedCount += processManualEntry(zipEntry, zipStream, targetDir)
-                
+
                 safeCloseEntry(zipStream)
             }
 
@@ -496,7 +591,7 @@ class ZipExtractor {
 
     /**
      * Processes a single ZIP entry during manual extraction.
-     * 
+     *
      * @param zipEntry The ZIP entry to process
      * @param zipStream The ZIP input stream
      * @param targetDir The target directory
@@ -528,7 +623,7 @@ class ZipExtractor {
 
     /**
      * Creates a directory during manual extraction.
-     * 
+     *
      * @param entryPath The path to create
      * @param entryName The name of the entry for logging
      */
@@ -543,7 +638,7 @@ class ZipExtractor {
 
     /**
      * Extracts a file during manual extraction.
-     * 
+     *
      * @param zipEntry The ZIP entry containing the file
      * @param zipStream The ZIP input stream
      * @param entryPath The path to extract the file to
@@ -551,7 +646,7 @@ class ZipExtractor {
      */
     private fun extractFileManually(zipEntry: ZipEntry, zipStream: ZipInputStream, entryPath: Path): Int {
         val entryName = zipEntry.name
-        
+
         try {
             // Create parent directories if they don't exist
             Files.createDirectories(entryPath.parent)
@@ -569,11 +664,24 @@ class ZipExtractor {
             Logger.debug("Extracted file: $entryName (${Files.size(entryPath)} bytes)")
 
             // Set executable permissions for gradlew
-            if (entryName.endsWith("gradlew")) {
-                entryPath.toFile().setExecutable(true)
-                Logger.debug("Set executable permissions for: $entryName")
+            if (entryName.endsWith("gradlew") || entryName.endsWith("gradlew.bat") || entryName.endsWith("gradlew.sh")) {
+                val gradlewFile = entryPath.toFile()
+                val permissionSet = gradlewFile.setExecutable(true, false) // executable for all users
+                gradlewFile.setReadable(true, false)
+                Logger.debug("Set executable permissions for: $entryName - ${if (permissionSet) "success" else "failed"}")
+
+                // As a fallback, try using chmod command
+                try {
+                    val chmodProcess = ProcessBuilder("chmod", "+x", entryPath.toString())
+                        .redirectErrorStream(true)
+                        .start()
+                    val chmodExitCode = chmodProcess.waitFor()
+                    Logger.debug("Chmod command for $entryName: ${if (chmodExitCode == 0) "success" else "failed with code $chmodExitCode"}")
+                } catch (e: Exception) {
+                    Logger.warning("Failed to execute chmod command for $entryName: ${e.message}")
+                }
             }
-            
+
             return 1
         } catch (e: Exception) {
             Logger.warning("Failed to extract file $entryName: ${e.message}")
@@ -583,7 +691,7 @@ class ZipExtractor {
 
     /**
      * Safely closes a ZIP entry, ignoring any exceptions.
-     * 
+     *
      * @param zipStream The ZIP input stream
      */
     private fun safeCloseEntry(zipStream: ZipInputStream) {

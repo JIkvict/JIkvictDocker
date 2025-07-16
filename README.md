@@ -55,6 +55,26 @@ Where:
 - `your-solution.zip` is the name of your ZIP file
 - `300` is the timeout in seconds (optional, default is 300)
 
+### Using Dependency Caching
+
+To speed up builds by caching Gradle dependencies between container runs:
+
+```bash
+# Create a named volume for Gradle cache
+docker volume create gradle-cache
+
+# Run with both input directory and cache volume mounted
+docker run --rm \
+  -v /path/to/your/zip/directory:/app/input \
+  -v gradle-cache:/gradle-cache \
+  jikvict-solution-runner /app/input/your-solution.zip 300
+```
+
+This will:
+- Store Gradle dependencies in a persistent volume
+- Reuse cached dependencies in subsequent runs
+- Significantly reduce build time for repeated builds
+
 ## Running Without Docker
 
 You can also run the solution directly without Docker:
@@ -78,6 +98,7 @@ java -jar build/libs/JIkvictDocker-1.0-SNAPSHOT.jar /path/to/your/solution.zip [
 - Timeout handling for long-running tasks
 - Detailed logging of the extraction and execution process
 - Automatic cleanup of temporary files
+- Gradle dependency caching for faster builds
 
 ## Customization
 
