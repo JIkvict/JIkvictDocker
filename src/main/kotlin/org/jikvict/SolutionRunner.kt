@@ -19,18 +19,19 @@ fun main(args: Array<String>) {
         exitProcess(1)
     }
 
-    Logger.info("Processing zip file: ${arguments.zipFilePath} with timeout: ${arguments.timeoutSeconds} seconds")
+    Logger.info("Processing zip files: ${arguments.firstZipFilePath} and ${arguments.secondZipFilePath} with timeout: ${arguments.timeoutSeconds} seconds")
 
     val solutionRunner = SolutionRunner()
-    solutionRunner.executeCode(arguments.zipFile, arguments.timeoutSeconds)
+    solutionRunner.executeCode(arguments.firstZipFile, arguments.secondZipFile, arguments.timeoutSeconds)
 }
 
 /**
  * Displays usage information for the application.
  */
 private fun displayUsage() {
-    Logger.info("Usage: SolutionRunner <zip-file-path> [timeout-seconds]")
-    Logger.info("  <zip-file-path>: Path to the zip archive containing the Gradle project")
+    Logger.info("Usage: SolutionRunner <first-zip-file-path> <second-zip-file-path> [timeout-seconds]")
+    Logger.info("  <first-zip-file-path>: Path to the first zip archive containing part of the Gradle project")
+    Logger.info("  <second-zip-file-path>: Path to the second zip archive containing part of the Gradle project")
     Logger.info("  [timeout-seconds]: Optional timeout in seconds (default: 300)")
 }
 
@@ -41,28 +42,37 @@ private fun displayUsage() {
  * @return Arguments object or null if arguments are invalid
  */
 private fun parseArguments(args: Array<String>): Arguments? {
-    if (args.isEmpty()) {
+    if (args.size < 2) {
         return null
     }
 
-    val zipFilePath = args[0]
-    val timeoutSeconds = if (args.size > 1) args[1].toLongOrNull() ?: 300L else 300L
+    val firstZipFilePath = args[0]
+    val secondZipFilePath = args[1]
+    val timeoutSeconds = if (args.size > 2) args[2].toLongOrNull() ?: 300L else 300L
 
-    val zipFile = File(zipFilePath)
-    if (!zipFile.exists()) {
-        Logger.error("File not found: $zipFilePath")
+    val firstZipFile = File(firstZipFilePath)
+    if (!firstZipFile.exists()) {
+        Logger.error("File not found: $firstZipFilePath")
         return null
     }
 
-    return Arguments(zipFilePath, zipFile, timeoutSeconds)
+    val secondZipFile = File(secondZipFilePath)
+    if (!secondZipFile.exists()) {
+        Logger.error("File not found: $secondZipFilePath")
+        return null
+    }
+
+    return Arguments(firstZipFilePath, firstZipFile, secondZipFilePath, secondZipFile, timeoutSeconds)
 }
 
 /**
  * Data class to hold parsed command line arguments.
  */
 data class Arguments(
-    val zipFilePath: String,
-    val zipFile: File,
+    val firstZipFilePath: String,
+    val firstZipFile: File,
+    val secondZipFilePath: String,
+    val secondZipFile: File,
     val timeoutSeconds: Long
 )
 
@@ -77,27 +87,35 @@ object Logger {
 }
 
 /**
- * Main class responsible for executing code from a zip file.
+ * Main class responsible for executing code from zip files.
  * Orchestrates the extraction, project discovery, and execution process.
  */
 class SolutionRunner {
+
     /**
-     * Executes code from a zip file with the specified timeout.
+     * Executes code from two zip files with the specified timeout.
+     * Both zip files are extracted to the same directory to merge their contents.
      *
-     * @param file Zip file containing the code to execute
+     * @param firstFile First zip file containing part of the code to execute
+     * @param secondFile Second zip file containing part of the code to execute
      * @param timeoutSeconds Timeout in seconds for execution
      */
-    fun executeCode(file: File, timeoutSeconds: Long) {
+    fun executeCode(firstFile: File, secondFile: File, timeoutSeconds: Long) {
         val executionId = UUID.randomUUID().toString()
         val tempDir = Files.createTempDirectory("code-$executionId")
 
         try {
-            // Extract and process the zip file
+            // Extract and process the first zip file
             val zipExtractor = ZipExtractor()
-            Logger.info("Extracting zip file to: $tempDir")
-            zipExtractor.extract(file, tempDir)
+            Logger.info("Extracting first zip file to: $tempDir")
+            zipExtractor.extract(firstFile, tempDir)
 
-            // Display the directory structure
+            // Extract and process the second zip file to the same directory
+            Logger.info("Extracting second zip file to: $tempDir")
+            zipExtractor.extract(secondFile, tempDir)
+
+            // Display the merged directory structure
+            Logger.info("Merged directory structure:")
             DirectoryUtils.logTreeStructure(tempDir)
 
             // Find the project directory
@@ -238,7 +256,14 @@ class GradleRunner {
             Logger.info("Attempting to execute system Gradle directly...")
             val processBuilder = ProcessBuilder()
                 .directory(projectDir.toFile())
-                .command("gradle", "test", "--no-daemon", "--console=plain", "-g", System.getenv("GRADLE_USER_HOME") ?: "/gradle-cache")
+                .command(
+                    "gradle",
+                    "test",
+                    "--no-daemon",
+                    "--console=plain",
+                    "-g",
+                    System.getenv("GRADLE_USER_HOME") ?: "/gradle-cache"
+                )
                 .redirectErrorStream(true)
 
             Logger.info("Executing command: gradle test --no-daemon --console=plain -g ${System.getenv("GRADLE_USER_HOME") ?: "/gradle-cache"}")
@@ -266,7 +291,14 @@ class GradleRunner {
         try {
             val processBuilder = ProcessBuilder()
                 .directory(projectDir.toFile())
-                .command("/opt/gradle/bin/gradle", "test", "--no-daemon", "--console=plain", "-g", System.getenv("GRADLE_USER_HOME") ?: "/gradle-cache")
+                .command(
+                    "/opt/gradle/bin/gradle",
+                    "test",
+                    "--no-daemon",
+                    "--console=plain",
+                    "-g",
+                    System.getenv("GRADLE_USER_HOME") ?: "/gradle-cache"
+                )
                 .redirectErrorStream(true)
 
             Logger.info("Executing command: /opt/gradle/bin/gradle test --no-daemon --console=plain -g ${System.getenv("GRADLE_USER_HOME") ?: "/gradle-cache"}")
@@ -328,7 +360,37 @@ class GradleRunner {
 /**
  * Class responsible for extracting ZIP archives.
  */
-class ZipExtractor {
+open class ZipExtractor {
+    /**
+     * Common root directories to strip from ZIP entries to ensure proper merging.
+     * These are common patterns found in ZIP files that should be removed.
+     */
+    private val commonRootDirs = listOf(
+        "default-structure/",
+        "task1/default-structure/"
+    )
+
+    /**
+     * Directories and files to be filtered out during extraction.
+     */
+    private val filteredPaths = listOf(
+        "build/", "target/", ".idea/",
+        "__MACOSX/", ".DS_Store",
+        "Thumbs.db", ".git/"
+    )
+
+    /**
+     * Checks if a path should be filtered out during extraction.
+     *
+     * @param path The path to check
+     * @return true if the path should be filtered out, false otherwise
+     */
+    private fun shouldFilterPath(path: String): Boolean {
+        return filteredPaths.any { filter ->
+            path.contains(filter, ignoreCase = true)
+        }
+    }
+
     /**
      * Extracts a ZIP file to the target directory.
      *
@@ -336,15 +398,54 @@ class ZipExtractor {
      * @param targetDir Target directory to extract to
      */
     fun extract(file: File, targetDir: Path) {
+        Logger.info("Starting extraction of ZIP file: ${file.name} to directory: $targetDir")
+
         try {
+            // Check if the target directory exists and create it if it doesn't
+            if (!Files.exists(targetDir)) {
+                Files.createDirectories(targetDir)
+                Logger.info("Created target directory: $targetDir")
+            }
+
             extractZipFile(file, targetDir)
-            Logger.info("ZIP archive successfully extracted")
+            Logger.info("ZIP archive ${file.name} successfully extracted to $targetDir")
+
+            // Log the number of files extracted
+            val extractedCount = countExtractedFiles(targetDir)
+            Logger.info("Total files in target directory after extraction: $extractedCount")
         } catch (e: java.util.zip.ZipException) {
+            Logger.warning("ZIP exception occurred during extraction of ${file.name}: ${e.message}")
             handleZipException(e, file, targetDir)
         } catch (e: Exception) {
-            Logger.error("Unexpected error during ZIP extraction: ${e.message}")
-            throw RuntimeException("Failed to extract ZIP archive: ${e.message}", e)
+            Logger.error("Unexpected error during ZIP extraction of ${file.name}: ${e.message}")
+            throw RuntimeException("Failed to extract ZIP archive ${file.name}: ${e.message}", e)
         }
+    }
+
+    /**
+     * Strips common root directories from entry paths to ensure proper merging.
+     *
+     * @param entryName The original entry name from the ZIP file
+     * @return The entry name with common root directories stripped
+     */
+    private fun stripCommonRootDirs(entryName: String): String {
+        var result = entryName
+
+        // Skip filtered paths
+        if (shouldFilterPath(entryName)) {
+            return entryName
+        }
+
+        // Try to strip each common root directory
+        for (rootDir in commonRootDirs) {
+            if (result.startsWith(rootDir)) {
+                result = result.substring(rootDir.length)
+                Logger.debug("Stripped prefix '$rootDir' from entry: $entryName -> $result")
+                break
+            }
+        }
+
+        return result
     }
 
     /**
@@ -392,7 +493,15 @@ class ZipExtractor {
      * @param targetDir The target directory
      */
     private fun processZipEntry(zipEntry: ZipEntry, zipStream: ZipInputStream, targetDir: Path) {
-        val entryPath = targetDir.resolve(zipEntry.name)
+        // Skip filtered paths
+        if (shouldFilterPath(zipEntry.name)) {
+            Logger.debug("Skipping filtered path: ${zipEntry.name}")
+            return
+        }
+
+        // Strip common root directories to ensure proper merging
+        val strippedEntryName = stripCommonRootDirs(zipEntry.name)
+        val entryPath = targetDir.resolve(strippedEntryName)
 
         // Check for path traversal
         if (!entryPath.startsWith(targetDir)) {
@@ -402,7 +511,7 @@ class ZipExtractor {
 
         if (zipEntry.isDirectory) {
             Files.createDirectories(entryPath)
-            Logger.debug("Created directory: ${zipEntry.name}")
+            Logger.debug("Created directory: $strippedEntryName (original: ${zipEntry.name})")
         } else {
             extractFile(zipEntry, zipStream, entryPath)
         }
@@ -476,29 +585,114 @@ class ZipExtractor {
         Logger.info("Attempting extraction with unzip command")
 
         try {
-            val processBuilder = ProcessBuilder("unzip", "-q", "-o", file.absolutePath, "-d", targetDir.toString())
-                .redirectErrorStream(true)
+            // First, extract to a temporary directory to inspect the structure
+            val tempExtractDir = Files.createTempDirectory("unzip-temp")
 
-            val process = processBuilder.start()
-            val output = process.inputStream.bufferedReader().use { it.readText() }
-            val exitCode = process.waitFor()
+            try {
+                // Extract to the temporary directory first
+                val processBuilder =
+                    ProcessBuilder("unzip", "-q", "-o", file.absolutePath, "-d", tempExtractDir.toString())
+                        .redirectErrorStream(true)
 
-            if (exitCode != 0) {
-                Logger.warning("Unzip command exited with code $exitCode. Output: $output")
-                return false
+                val process = processBuilder.start()
+                val output = process.inputStream.bufferedReader().use { it.readText() }
+                val exitCode = process.waitFor()
+
+                if (exitCode != 0) {
+                    Logger.warning("Unzip command exited with code $exitCode. Output: $output")
+                    return false
+                }
+
+                // Now move files from the temp directory to the target directory, stripping prefixes
+                Logger.info("Reorganizing extracted files to strip common prefixes")
+
+                // Check for common root directories in the extracted files
+                Files.list(tempExtractDir).use { paths ->
+                    paths.filter { Files.isDirectory(it) }
+                        .map { it.fileName.toString() }
+                        .toList()
+                }
+
+                // If we found "default-structure" or "task1" directories, we need to reorganize
+                val defaultStructureDir = tempExtractDir.resolve("default-structure")
+                val task1Dir = tempExtractDir.resolve("task1")
+
+                if (Files.exists(defaultStructureDir)) {
+                    // Move contents of default-structure to target directory
+                    Logger.info("Moving contents from default-structure directory to target")
+                    moveDirectoryContents(defaultStructureDir, targetDir)
+                } else if (Files.exists(task1Dir) && Files.exists(task1Dir.resolve("default-structure"))) {
+                    // Move contents of task1/default-structure to target directory
+                    Logger.info("Moving contents from task1/default-structure directory to target")
+                    moveDirectoryContents(task1Dir.resolve("default-structure"), targetDir)
+                } else {
+                    // No common prefixes found, just move everything
+                    Logger.info("No common prefixes found, moving all files")
+                    moveDirectoryContents(tempExtractDir, targetDir)
+                }
+
+                // Count and report extracted files
+                val extractedCount = countExtractedFiles(targetDir)
+                Logger.info("Extracted and reorganized $extractedCount files using unzip")
+
+                // Set executable permissions for gradlew if it exists
+                setGradlewExecutable(targetDir)
+                return true
+            } finally {
+                // Clean up the temporary directory
+                try {
+                    DirectoryUtils.cleanupDirectory(tempExtractDir)
+                } catch (e: Exception) {
+                    Logger.warning("Failed to clean up temporary directory: ${e.message}")
+                }
             }
-
-            // Count and report extracted files
-            val extractedCount = countExtractedFiles(targetDir)
-            Logger.info("Extracted $extractedCount files using unzip")
-
-            // Set executable permissions for gradlew if it exists
-            setGradlewExecutable(targetDir)
-            return true
         } catch (e: Exception) {
             Logger.warning("Error using unzip command: ${e.message}")
             return false
         }
+    }
+
+    /**
+     * Moves the contents of a directory to another directory.
+     *
+     * @param sourceDir The source directory
+     * @param targetDir The target directory
+     */
+    private fun moveDirectoryContents(sourceDir: Path, targetDir: Path) {
+        Files.walk(sourceDir)
+            .filter { it != sourceDir } // Skip the source directory itself
+            .forEach { sourcePath ->
+                val relativePath = sourceDir.relativize(sourcePath)
+                val relativePathStr = relativePath.toString()
+
+                // Skip filtered paths
+                if (shouldFilterPath(relativePathStr)) {
+                    Logger.debug("Skipping filtered path: $relativePathStr")
+                    return@forEach
+                }
+
+                val targetPath = targetDir.resolve(relativePath)
+
+                if (Files.isDirectory(sourcePath)) {
+                    if (!Files.exists(targetPath)) {
+                        Files.createDirectories(targetPath)
+                        Logger.debug("Created directory: $relativePath")
+                    }
+                } else {
+                    // Create parent directories if they don't exist
+                    Files.createDirectories(targetPath.parent)
+
+                    // Move the file
+                    try {
+                        Files.move(sourcePath, targetPath)
+                        Logger.debug("Moved file: $relativePath")
+                    } catch (_: java.nio.file.FileAlreadyExistsException) {
+                        // If the file already exists, replace it
+                        Files.copy(sourcePath, targetPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                        Logger.debug("Replaced existing file: $relativePath")
+                    }
+                }
+            }
     }
 
     /**
@@ -599,7 +793,16 @@ class ZipExtractor {
      */
     private fun processManualEntry(zipEntry: ZipEntry, zipStream: ZipInputStream, targetDir: Path): Int {
         val entryName = zipEntry.name
-        val entryPath = targetDir.resolve(entryName)
+
+        // Skip filtered paths
+        if (shouldFilterPath(entryName)) {
+            Logger.debug("Skipping filtered path: $entryName")
+            return 0
+        }
+
+        // Strip common root directories to ensure proper merging
+        val strippedEntryName = stripCommonRootDirs(entryName)
+        val entryPath = targetDir.resolve(strippedEntryName)
 
         // Check for path traversal
         if (!entryPath.startsWith(targetDir)) {
@@ -607,14 +810,9 @@ class ZipExtractor {
             return 0
         }
 
-        // Skip macOS system files
-        if (entryName.contains("__MACOSX") || entryName.contains(".DS_Store")) {
-            Logger.debug("Skipping macOS system file: $entryName")
-            return 0
-        }
-
         return if (zipEntry.isDirectory) {
-            createDirectory(entryPath, entryName)
+            createDirectory(entryPath, strippedEntryName)
+            Logger.debug("Created directory: $strippedEntryName (original: $entryName)")
             0
         } else {
             extractFileManually(zipEntry, zipStream, entryPath)
@@ -645,7 +843,8 @@ class ZipExtractor {
      * @return 1 if the file was extracted successfully, 0 otherwise
      */
     private fun extractFileManually(zipEntry: ZipEntry, zipStream: ZipInputStream, entryPath: Path): Int {
-        val entryName = zipEntry.name
+        val originalEntryName = zipEntry.name
+        val strippedEntryName = stripCommonRootDirs(originalEntryName)
 
         try {
             // Create parent directories if they don't exist
@@ -661,14 +860,17 @@ class ZipExtractor {
                 }
             }
 
-            Logger.debug("Extracted file: $entryName (${Files.size(entryPath)} bytes)")
+            Logger.debug("Extracted file: $strippedEntryName (original: $originalEntryName) (${Files.size(entryPath)} bytes)")
 
             // Set executable permissions for gradlew
-            if (entryName.endsWith("gradlew") || entryName.endsWith("gradlew.bat") || entryName.endsWith("gradlew.sh")) {
+            if (strippedEntryName.endsWith("gradlew") || strippedEntryName.endsWith("gradlew.bat") || strippedEntryName.endsWith(
+                    "gradlew.sh"
+                )
+            ) {
                 val gradlewFile = entryPath.toFile()
                 val permissionSet = gradlewFile.setExecutable(true, false) // executable for all users
                 gradlewFile.setReadable(true, false)
-                Logger.debug("Set executable permissions for: $entryName - ${if (permissionSet) "success" else "failed"}")
+                Logger.debug("Set executable permissions for: $strippedEntryName - ${if (permissionSet) "success" else "failed"}")
 
                 // As a fallback, try using chmod command
                 try {
@@ -676,15 +878,15 @@ class ZipExtractor {
                         .redirectErrorStream(true)
                         .start()
                     val chmodExitCode = chmodProcess.waitFor()
-                    Logger.debug("Chmod command for $entryName: ${if (chmodExitCode == 0) "success" else "failed with code $chmodExitCode"}")
+                    Logger.debug("Chmod command for $strippedEntryName: ${if (chmodExitCode == 0) "success" else "failed with code $chmodExitCode"}")
                 } catch (e: Exception) {
-                    Logger.warning("Failed to execute chmod command for $entryName: ${e.message}")
+                    Logger.warning("Failed to execute chmod command for $strippedEntryName: ${e.message}")
                 }
             }
 
             return 1
         } catch (e: Exception) {
-            Logger.warning("Failed to extract file $entryName: ${e.message}")
+            Logger.warning("Failed to extract file $strippedEntryName (original: $originalEntryName): ${e.message}")
             return 0
         }
     }

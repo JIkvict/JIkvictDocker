@@ -6,9 +6,8 @@ WORKDIR /app
 # Copy the JAR file
 COPY build/libs/JIkvictDocker-1.0-SNAPSHOT.jar /app/solution-runner.jar
 
-# Install unzip for better compatibility with macOS ZIP files
 RUN apt-get update && \
-    apt-get install -y unzip && \
+    apt-get install -y unzip curl git && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -26,8 +25,19 @@ RUN wget -q https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-b
     rm gradle.zip && \
     mkdir -p ${GRADLE_USER_HOME}
 
-# Create a directory for input files
+# Create a directory for input files and preloaded dependencies
 RUN mkdir -p /app/input
+RUN mkdir -p /app/preloaded-deps
+
+# Copy the preloaded dependencies build.gradle file
+COPY preloaded-deps-build.gradle /app/preloaded-deps/build.gradle
+
+# Download common dependencies
+WORKDIR /app/preloaded-deps
+RUN gradle downloadDependencies --no-daemon
+
+# Return to app directory
+WORKDIR /app
 
 # Copy only the build files first to cache dependencies
 COPY build.gradle settings.gradle gradle.properties /app/

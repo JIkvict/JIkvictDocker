@@ -109,9 +109,46 @@ You can customize the behavior by modifying the following:
 - The Docker base image
 - Additional dependencies or tools in the Docker container
 
+## Pre-installed Dependencies
+
+The Docker image comes with a wide range of pre-installed Java libraries and dependencies to speed up test execution. These include:
+
+### Testing Frameworks
+- JUnit 4 and 5
+- TestNG
+- Mockito
+- PowerMock
+- AssertJ
+- Hamcrest
+
+### Common Libraries
+- Spring Framework (Core, Context, Web, etc.)
+- Spring Boot (Web, Data JPA, Security, Test)
+- Hibernate/JPA
+- Jackson (JSON processing)
+- Apache Commons (Lang3, IO, Collections4)
+- Google Guava
+- SLF4J/Logback
+- Log4j
+- Lombok
+
+### Database Drivers
+- H2
+- PostgreSQL
+- MySQL
+
+### Other Utilities
+- Servlet APIs
+- Reactor Core
+- MapStruct
+- Gson
+
+These dependencies are downloaded during the Docker image build process, so they are immediately available when running tests, eliminating the need to download them during test execution.
+
 ## Future Enhancements
 
 - Support for additional Gradle tasks
 - More detailed reporting of test results
 - Integration with CI/CD pipelines
 - Support for other build systems beyond Gradle
+- Expanding the pre-installed dependency set based on usage patterns
