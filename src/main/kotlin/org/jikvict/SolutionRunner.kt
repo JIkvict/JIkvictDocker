@@ -3,6 +3,7 @@ package org.jikvict
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
@@ -22,7 +23,7 @@ fun main(args: Array<String>) {
     Logger.info("Processing zip files: ${arguments.firstZipFilePath} and ${arguments.secondZipFilePath} with timeout: ${arguments.timeoutSeconds} seconds")
 
     val solutionRunner = SolutionRunner()
-    solutionRunner.executeCode(arguments.firstZipFile, arguments.secondZipFile, arguments.timeoutSeconds)
+    solutionRunner.executeCode(arguments.firstZipFile, arguments.secondZipFile, arguments.timeoutSeconds, arguments.resultsPath)
 }
 
 /**
@@ -49,6 +50,7 @@ private fun parseArguments(args: Array<String>): Arguments? {
     val firstZipFilePath = args[0]
     val secondZipFilePath = args[1]
     val timeoutSeconds = if (args.size > 2) args[2].toLongOrNull() ?: 300L else 300L
+    val resultsPath = if (args.size > 3) args[3] else "jikvict-results.json"
 
     val firstZipFile = File(firstZipFilePath)
     if (!firstZipFile.exists()) {
@@ -62,7 +64,7 @@ private fun parseArguments(args: Array<String>): Arguments? {
         return null
     }
 
-    return Arguments(firstZipFilePath, firstZipFile, secondZipFilePath, secondZipFile, timeoutSeconds)
+    return Arguments(firstZipFilePath, firstZipFile, secondZipFilePath, secondZipFile, timeoutSeconds, resultsPath)
 }
 
 /**
@@ -73,8 +75,10 @@ data class Arguments(
     val firstZipFile: File,
     val secondZipFilePath: String,
     val secondZipFile: File,
-    val timeoutSeconds: Long
+    val timeoutSeconds: Long,
+    val resultsPath: String
 )
+
 
 /**
  * Simple logger to centralize logging functionality.
@@ -100,7 +104,7 @@ class SolutionRunner {
      * @param secondFile Second zip file containing part of the code to execute
      * @param timeoutSeconds Timeout in seconds for execution
      */
-    fun executeCode(firstFile: File, secondFile: File, timeoutSeconds: Long) {
+    fun executeCode(firstFile: File, secondFile: File, timeoutSeconds: Long, resultPath: String) {
         val executionId = UUID.randomUUID().toString()
         val tempDir = Files.createTempDirectory("code-$executionId")
 
@@ -150,7 +154,7 @@ class SolutionRunner {
 
             // Run the Gradle task
             val gradleRunner = GradleRunner()
-            gradleRunner.runGradleTask(projectDir, timeoutSeconds)
+            gradleRunner.runGradleTask(projectDir, timeoutSeconds, resultPath)
         } catch (_: ProjectNotFoundException) {
             Logger.error("Project directory with gradlew not found in the archive")
         } catch (e: Exception) {
@@ -238,7 +242,7 @@ class GradleRunner {
      * @param projectDir Project directory containing the Gradle wrapper
      * @param timeoutSeconds Timeout in seconds
      */
-    fun runGradleTask(projectDir: Path, timeoutSeconds: Long) {
+    fun runGradleTask(projectDir: Path, timeoutSeconds: Long, resultPath: String) {
         val relativeProjectPath = projectDir.toString()
         Logger.info("Relative project path: $relativeProjectPath")
 
@@ -258,7 +262,7 @@ class GradleRunner {
                 .directory(projectDir.toFile())
                 .command(
                     "gradle",
-                    "test",
+                    "runJIkvictTests",
                     "--no-daemon",
                     "--console=plain",
                     "-g",
@@ -279,7 +283,7 @@ class GradleRunner {
                 handleTimeout(process, timeoutSeconds, output)
                 return
             } else {
-                handleCompletion(process.exitValue(), output)
+                handleCompletion(process.exitValue(), output, projectDir, resultPath)
                 return
             }
         } catch (e: Exception) {
@@ -293,7 +297,7 @@ class GradleRunner {
                 .directory(projectDir.toFile())
                 .command(
                     "/opt/gradle/bin/gradle",
-                    "test",
+                    "runJIkvictTests",
                     "--no-daemon",
                     "--console=plain",
                     "-g",
@@ -313,7 +317,7 @@ class GradleRunner {
             if (!completed) {
                 handleTimeout(process, timeoutSeconds, output)
             } else {
-                handleCompletion(process.exitValue(), output)
+                handleCompletion(process.exitValue(), output, projectDir, resultPath)
             }
         } catch (e: Exception) {
             Logger.error("Both system Gradle execution methods failed. Last error: ${e.message}")
@@ -346,15 +350,37 @@ class GradleRunner {
      *
      * @param exitCode The exit code of the process
      * @param output The output from the process
+     * @param projectDir The project directory
      */
-    private fun handleCompletion(exitCode: Int, output: String) {
+    private fun handleCompletion(exitCode: Int, output: String, projectDir: Path, resultsPath: String) {
         if (exitCode == 0) {
             Logger.info("Code executed successfully. Exit code: 0")
+
+            // Read and copy the contents of the jikvict-results.json file
+            val resultsFile = projectDir.resolve("build/jikvict-results.json")
+            if (Files.exists(resultsFile)) {
+                try {
+                    val jsonContent = Files.readString(resultsFile)
+                    Logger.info("Contents of jikvict-results.json:")
+                    println(jsonContent)
+
+                    // Копируем файл в указанное место
+                    val outputFile = Path.of(resultsPath)
+                    Files.copy(resultsFile, outputFile, StandardCopyOption.REPLACE_EXISTING)
+                    Logger.info("Results copied to: $outputFile")
+
+                } catch (e: Exception) {
+                    Logger.error("Failed to read or copy jikvict-results.json: ${e.message}")
+                }
+            } else {
+                Logger.warning("jikvict-results.json file not found at: $resultsFile")
+            }
         } else {
             Logger.error("Code execution failed. Exit code: $exitCode")
         }
         Logger.info("Execution logs:\n$output")
     }
+
 }
 
 /**
@@ -688,7 +714,7 @@ open class ZipExtractor {
                         Logger.debug("Moved file: $relativePath")
                     } catch (_: java.nio.file.FileAlreadyExistsException) {
                         // If the file already exists, replace it
-                        Files.copy(sourcePath, targetPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                        Files.copy(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING)
                         Logger.debug("Replaced existing file: $relativePath")
                     }
                 }
