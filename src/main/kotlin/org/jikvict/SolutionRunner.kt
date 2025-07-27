@@ -356,7 +356,6 @@ class GradleRunner {
         if (exitCode == 0) {
             Logger.info("Code executed successfully. Exit code: 0")
 
-            // Read and copy the contents of the jikvict-results.json file
             val resultsFile = projectDir.resolve("build/jikvict-results.json")
             if (Files.exists(resultsFile)) {
                 try {
@@ -364,7 +363,6 @@ class GradleRunner {
                     Logger.info("Contents of jikvict-results.json:")
                     println(jsonContent)
 
-                    // Копируем файл в указанное место
                     val outputFile = Path.of(resultsPath)
                     Files.copy(resultsFile, outputFile, StandardCopyOption.REPLACE_EXISTING)
                     Logger.info("Results copied to: $outputFile")
