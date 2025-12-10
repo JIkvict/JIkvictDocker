@@ -1,23 +1,19 @@
-FROM eclipse-temurin:21-jdk
 
-# Set working directory
+FROM eclipse-temurin:25-jdk
+
 WORKDIR /app
-
-# Copy the JAR file
-COPY build/libs/JIkvictDocker-1.0-SNAPSHOT.jar /app/solution-runner.jar
 
 RUN apt-get update && \
     apt-get install -y unzip curl git && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Gradle
-ENV GRADLE_VERSION=8.13
+ENV GRADLE_VERSION=9.1.0
 ENV GRADLE_HOME=/opt/gradle
 ENV PATH=${GRADLE_HOME}/bin:${PATH}
 ENV GRADLE_USER_HOME=/gradle-cache
 
-RUN wget -q https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip -O gradle.zip && \
+RUN curl -L https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip -o gradle.zip && \
     mkdir -p ${GRADLE_HOME} && \
     unzip -q gradle.zip -d /opt && \
     mv /opt/gradle-${GRADLE_VERSION}/* ${GRADLE_HOME} && \
@@ -25,36 +21,25 @@ RUN wget -q https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-b
     rm gradle.zip && \
     mkdir -p ${GRADLE_USER_HOME}
 
-# Create a directory for input files and preloaded dependencies
-RUN mkdir -p /app/input
-RUN mkdir -p /app/preloaded-deps
+RUN mkdir -p ${GRADLE_USER_HOME}/wrapper/dists/gradle-${GRADLE_VERSION}-bin && \
+    curl -L https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip \
+    -o ${GRADLE_USER_HOME}/wrapper/dists/gradle-${GRADLE_VERSION}-bin/gradle-${GRADLE_VERSION}-bin.zip && \
+    cd ${GRADLE_USER_HOME}/wrapper/dists/gradle-${GRADLE_VERSION}-bin && \
+    unzip -q gradle-${GRADLE_VERSION}-bin.zip && \
+    mv gradle-${GRADLE_VERSION} $(echo -n "gradle-${GRADLE_VERSION}-bin.zip" | md5sum | cut -d' ' -f1) && \
+    rm gradle-${GRADLE_VERSION}-bin.zip
 
-# Copy the preloaded dependencies build.gradle file
+COPY build/libs/JIkvictDocker-1.0-SNAPSHOT.jar /app/solution-runner.jar
+
+RUN mkdir -p /app/input /app/preloaded-deps
+
 COPY preloaded-deps-build.gradle /app/preloaded-deps/build.gradle
 
-# Download common dependencies
 WORKDIR /app/preloaded-deps
 RUN gradle downloadDependencies --no-daemon
 
-# Return to app directory
 WORKDIR /app
 
-# Copy only the build files first to cache dependencies
-COPY build.gradle settings.gradle gradle.properties /app/
-COPY gradle /app/gradle
-
-# Copy source code
-COPY src /app/src
-
-# Build the project with cached dependencies
-RUN gradle build --no-daemon
-
-# Set the entrypoint to run the JAR
 ENTRYPOINT ["java", "-jar", "/app/solution-runner.jar"]
 
-# Default command if no arguments are provided
 CMD ["/app/input/solution.zip", "300"]
-
-# Instructions for running with dependency caching:
-# docker build -t jikvict-docker .
-# docker run -v gradle-cache:/gradle-cache jikvict-docker

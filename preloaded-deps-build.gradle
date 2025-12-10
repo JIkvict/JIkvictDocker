@@ -1,14 +1,6 @@
 plugins {
     id "java"
-    id "org.springframework.boot" version "3.2.0" apply false
-    id "io.spring.dependency-management" version "1.1.4" apply false
-    id "io.freefair.lombok" version "8.4" apply false
-    id "org.jetbrains.kotlin.jvm" version "2.1.21" apply false
-    id "org.jetbrains.kotlin.plugin.spring" version "2.1.21" apply false
-    id "org.jetbrains.kotlin.plugin.jpa" version "2.1.21" apply false
-    id "com.diffplug.spotless" version "6.25.0" apply false
-    id "org.sonarqube" version "4.4.1.3373" apply false
-    id "jacoco"
+    id "org.jetbrains.kotlin.jvm" version "2.1.21"
 }
 
 repositories {
@@ -16,87 +8,43 @@ repositories {
 }
 
 dependencies {
-    // Testing frameworks
-    implementation "org.junit.jupiter:junit-jupiter:5.10.1"
-    implementation "org.junit.jupiter:junit-jupiter-api:5.10.1"
+    // JUnit Platform
+    implementation "org.junit.platform:junit-platform-launcher:1.10.1"
+    implementation "org.junit.platform:junit-platform-engine:1.10.1"
+    implementation "org.junit.platform:junit-platform-commons:1.10.1"
+
+    // JUnit Jupiter
     implementation "org.junit.jupiter:junit-jupiter-engine:5.10.1"
+    implementation "org.junit.jupiter:junit-jupiter-api:5.10.1"
     implementation "org.junit.jupiter:junit-jupiter-params:5.10.1"
-    implementation "org.junit.vintage:junit-vintage-engine:5.10.1"
+
+    // JUnit 4
     implementation "junit:junit:4.13.2"
-    implementation "org.testng:testng:7.8.0"
-    implementation "org.mockito:mockito-core:5.8.0"
-    implementation "org.mockito:mockito-junit-jupiter:5.8.0"
-    implementation "org.assertj:assertj-core:3.24.2"
-    implementation "org.hamcrest:hamcrest:2.2"
-    implementation "org.powermock:powermock-api-mockito2:2.0.9"
-    implementation "org.powermock:powermock-module-junit4:2.0.9"
-    
-    // Spring Framework
-    implementation "org.springframework:spring-core:6.1.2"
-    implementation "org.springframework:spring-context:6.1.2"
-    implementation "org.springframework:spring-beans:6.1.2"
-    implementation "org.springframework:spring-web:6.1.2"
-    implementation "org.springframework:spring-webmvc:6.1.2"
-    implementation "org.springframework:spring-test:6.1.2"
-    implementation "org.springframework.boot:spring-boot-starter:3.2.0"
-    implementation "org.springframework.boot:spring-boot-starter-web:3.2.0"
-    implementation "org.springframework.boot:spring-boot-starter-data-jpa:3.2.0"
-    implementation "org.springframework.boot:spring-boot-starter-test:3.2.0"
-    implementation "org.springframework.boot:spring-boot-starter-security:3.2.0"
-    
-    // Hibernate/JPA
-    implementation "org.hibernate:hibernate-core:6.4.0.Final"
-    implementation "jakarta.persistence:jakarta.persistence-api:3.1.0"
-    
-    // Jackson
-    implementation "com.fasterxml.jackson.core:jackson-databind:2.16.0"
-    implementation "com.fasterxml.jackson.core:jackson-core:2.16.0"
-    implementation "com.fasterxml.jackson.core:jackson-annotations:2.16.0"
-    implementation "com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.16.0"
-    implementation "com.fasterxml.jackson.module:jackson-module-kotlin:2.16.0"
-    
-    // Apache Commons
-    implementation "org.apache.commons:commons-lang3:3.14.0"
-    implementation "commons-io:commons-io:2.15.1"
-    implementation "org.apache.commons:commons-collections4:4.4"
-    implementation "commons-codec:commons-codec:1.16.0"
-    
-    // Google Guava
-    implementation "com.google.guava:guava:32.1.3-jre"
-    
+
     // Logging
-    implementation "org.slf4j:slf4j-api:2.0.9"
-    implementation "ch.qos.logback:logback-classic:1.4.14"
-    implementation "org.apache.logging.log4j:log4j-core:2.22.0"
-    
-    // Lombok
-    implementation "org.projectlombok:lombok:1.18.30"
-    
+    implementation "org.slf4j:slf4j-api:2.0.13"
+
+    // Database
+    implementation "com.h2database:h2:2.2.224"
+
+    // Mockito
+    implementation "org.mockito:mockito-core:5.20.0"
+    implementation "org.mockito.kotlin:mockito-kotlin:5.3.1"
+
+    // MockK
+    implementation "io.mockk:mockk:1.14.6"
+
+    // AssertJ
+    implementation "org.assertj:assertj-core:3.27.6"
+
     // Kotlin
     implementation "org.jetbrains.kotlin:kotlin-stdlib:2.1.21"
     implementation "org.jetbrains.kotlin:kotlin-reflect:2.1.21"
-    
-    // Database drivers
-    implementation "com.h2database:h2:2.2.224"
-    implementation "org.postgresql:postgresql:42.7.1"
-    implementation "mysql:mysql-connector-java:8.0.33"
-    
-    // Other common libraries
-    implementation "javax.servlet:javax.servlet-api:4.0.1"
-    implementation "jakarta.servlet:jakarta.servlet-api:6.0.0"
-    implementation "io.projectreactor:reactor-core:3.6.1"
-    implementation "org.mapstruct:mapstruct:1.5.5.Final"
-    implementation "com.google.code.gson:gson:2.10.1"
 }
 
 tasks.register('downloadDependencies') {
     doLast {
-        configurations {
-            downloadable {
-                extendsFrom implementation
-                canBeResolved = true
-            }
-        }
-        configurations.downloadable.files
+        configurations.compileClasspath.resolve()
+        configurations.runtimeClasspath.resolve()
     }
 }

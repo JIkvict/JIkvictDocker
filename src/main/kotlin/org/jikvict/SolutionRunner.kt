@@ -109,14 +109,14 @@ class SolutionRunner {
         val tempDir = Files.createTempDirectory("code-$executionId")
 
         try {
-            // Extract and process the first zip file
+            // Extract and process the second zip file FIRST
             val zipExtractor = ZipExtractor()
-            Logger.info("Extracting first zip file to: $tempDir")
-            zipExtractor.extract(firstFile, tempDir)
-
-            // Extract and process the second zip file to the same directory
             Logger.info("Extracting second zip file to: $tempDir")
             zipExtractor.extract(secondFile, tempDir)
+
+            // Then extract ONLY 'exposed' paths from the first zip file to the same directory
+            Logger.info("Extracting only 'exposed' paths from first zip file to: $tempDir")
+            zipExtractor.extractOnlyExposed(firstFile, tempDir)
 
             // Display the merged directory structure
             Logger.info("Merged directory structure:")
@@ -263,6 +263,7 @@ class GradleRunner {
                 .command(
                     "gradle",
                     "runJIkvictTests",
+                    "--info",
                     "--no-daemon",
                     "--console=plain",
                     "-g",
@@ -270,7 +271,8 @@ class GradleRunner {
                 )
                 .redirectErrorStream(true)
 
-            Logger.info("Executing command: gradle test --no-daemon --console=plain -g ${System.getenv("GRADLE_USER_HOME") ?: "/gradle-cache"}")
+            Logger.info("Executing command: gradle runJIkvictTests --info --no-daemon --console=plain -g ${System.getenv("GRADLE_USER_HOME") ?: "/gradle-cache"}")
+            Logger.info("With opts: ${System.getenv("GRADLE_OPTS") ?: ""}")
             val process = processBuilder.start()
 
             // Capture output
@@ -403,6 +405,28 @@ open class ZipExtractor {
         "Thumbs.db", ".git/"
     )
 
+    // When true, only entries that contain an 'exposed' directory in their path will be extracted
+    private var onlyExposedPaths: Boolean = false
+
+    /**
+     * Enables extracting only entries that include an 'exposed' directory in their path for a single extraction call.
+     */
+    fun extractOnlyExposed(file: File, targetDir: Path) {
+        val previous = onlyExposedPaths
+        onlyExposedPaths = true
+        try {
+            extract(file, targetDir)
+        } finally {
+            onlyExposedPaths = previous
+        }
+    }
+
+    private fun isExposedPath(path: String): Boolean {
+        val normalized = path.replace('\\', '/').lowercase()
+        // Match 'exposed' as a directory segment
+        return Regex("(^|/)exposed(/|$)").containsMatchIn(normalized)
+    }
+
     /**
      * Checks if a path should be filtered out during extraction.
      *
@@ -410,6 +434,7 @@ open class ZipExtractor {
      * @return true if the path should be filtered out, false otherwise
      */
     private fun shouldFilterPath(path: String): Boolean {
+        if (onlyExposedPaths && !isExposedPath(path)) return true
         return filteredPaths.any { filter ->
             path.contains(filter, ignoreCase = true)
         }
@@ -606,6 +631,8 @@ open class ZipExtractor {
      * @return true if extraction was successful, false otherwise
      */
     private fun extractWithUnzipCommand(file: File, targetDir: Path): Boolean {
+            // When only exposed paths are needed, avoid using system unzip as it cannot filter entries directly
+            if (onlyExposedPaths) return false
         Logger.info("Attempting extraction with unzip command")
 
         try {
