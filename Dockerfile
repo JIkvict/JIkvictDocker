@@ -1,5 +1,4 @@
-
-FROM eclipse-temurin:25-jdk
+FROM eclipse-temurin:21-jdk
 
 WORKDIR /app
 
@@ -31,12 +30,22 @@ RUN mkdir -p ${GRADLE_USER_HOME}/wrapper/dists/gradle-${GRADLE_VERSION}-bin && \
 
 COPY build/libs/JIkvictDocker-1.0-SNAPSHOT.jar /app/solution-runner.jar
 
-RUN mkdir -p /app/input /app/preloaded-deps
+RUN mkdir -p /app/input /app/preloaded-deps /app/preloaded-deps2
 
-COPY preloaded-deps-build.gradle /app/preloaded-deps/build.gradle
+COPY preloaded-deps.build.gradle.kts /app/preloaded-deps/build.gradle.kts
+COPY preloaded-deps2.build.gradle.kts /app/preloaded-deps2/build.gradle.kts
 
 WORKDIR /app/preloaded-deps
-RUN gradle downloadDependencies --no-daemon
+RUN mkdir -p src/main/kotlin && \
+    echo "fun main() {}" > src/main/kotlin/Dummy.kt
+RUN gradle classes testClasses --no-daemon
+
+WORKDIR /app/preloaded-deps2
+RUN mkdir -p src/main/kotlin && \
+    echo "fun main() {}" > src/main/kotlin/Dummy.kt
+RUN gradle classes testClasses --no-daemon
+
+RUN rm -rf /app/preloaded-deps /app/preloaded-deps2
 
 WORKDIR /app
 
