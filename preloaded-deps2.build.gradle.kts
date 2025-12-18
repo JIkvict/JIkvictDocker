@@ -70,7 +70,7 @@ dependencies {
     implementation("com.fasterxml.jackson.core:jackson-core:2.16.0")
     implementation("com.fasterxml.jackson.core:jackson-annotations:2.16.0")
 
-    implementation("com.github.JIkvict.JIkvictTestingLibrary:JIkvictTestingPlugin:v0.0.9")
+    implementation("com.github.JIkvict.JIkvictTestingLibrary:JIkvictTestingPlugin:v0.0.10")
 }
 
 tasks.register("downloadDependencies") {
